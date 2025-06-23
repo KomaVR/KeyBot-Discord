@@ -14,13 +14,12 @@ import io
 from github import Github
 
 load_dotenv()
-TOKEN           = os.getenv('DISCORD_TOKEN')
-ADMIN_ROLE_NAME = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
-OWNER_ID        = int(os.getenv('OWNER_ID', '0'))
-HMAC_SECRET     = os.getenv('HMAC_SECRET', '')
-GIST_TOKEN = os.getenv('KEYS_GIST_TOKEN', '').strip()
-GIST_ID    = os.getenv('GIST_ID', '').strip()
-
+TOKEN             = os.getenv('DISCORD_TOKEN')
+ADMIN_ROLE_NAME   = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
+OWNER_ID          = int(os.getenv('OWNER_ID', '0'))
+HMAC_SECRET       = os.getenv('HMAC_SECRET', '')
+GIST_TOKEN        = os.getenv('KEYS_GIST_TOKEN')
+GIST_ID           = os.getenv('GIST_ID')
 # Load or init panel config
 config = {}
 if os.path.exists('config.json'):
