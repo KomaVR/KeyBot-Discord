@@ -1,156 +1,135 @@
-# key_system_bot.py
 import os
 import json
 import sqlite3
 import secrets
 import string
 from datetime import datetime
-
 import discord
-from discord import app_commands, ui, ButtonStyle
-from discord.ext import commands
+from discord import app_commands
+from discord.ui import View, button, Button
+from discord import ButtonStyle
 from dotenv import load_dotenv
 
-# ─── Load environment ──────────────────────────────────────────────────────────
+# Load environment
 load_dotenv()
-TOKEN            = os.getenv("DISCORD_TOKEN")
-ADMIN_ROLE_NAME  = os.getenv("ADMIN_ROLE_NAME", "KeyManager")
-OWNER_ID         = int(os.getenv("OWNER_ID", "0"))
+TOKEN = os.getenv('DISCORD_TOKEN')
+ADMIN_ROLE_NAME = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
+OWNER_ID = int(os.getenv('OWNER_ID', '0'))  # Bot owner ID (optional)
 
-# ─── Paths & DB setup ─────────────────────────────────────────────────────────
-DB_PATH     = "keys.db"
-CONFIG_PATH = "config.json"
-KEYS_FILE   = "keys.txt"
+# Paths
+DB_PATH = 'keys.db'
+CONFIG_PATH = 'config.json'
+KEYS_FILE = 'keys.txt'
 
-conn   = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
-cursor.execute("""
+# Initialize DB
+conn = sqlite3.connect(DB_PATH)
+c = conn.cursor()
+c.execute('''
 CREATE TABLE IF NOT EXISTS keys (
-    key         TEXT   PRIMARY KEY,
-    role_id     INTEGER,
+    key TEXT PRIMARY KEY,
+    role_id INTEGER,
     redeemed_by INTEGER,
     redeemed_at TEXT
-)
-""")
+);
+''')
 conn.commit()
 
+# Load or init config
 if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r") as f:
+    with open(CONFIG_PATH, 'r') as f:
         config = json.load(f)
 else:
     config = {}
 
-# ─── Bot & Intents ────────────────────────────────────────────────────────────
-intents = discord.Intents.default()
-intents.members = True
-bot     = commands.Bot(command_prefix="!", intents=intents)
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-def is_admin(member: discord.Member) -> bool:
+# Helper: check admin
+async def is_admin(member: discord.Member) -> bool:
     if OWNER_ID and member.id == OWNER_ID:
         return True
     return any(r.name == ADMIN_ROLE_NAME for r in member.roles)
 
-def gen_key(length: int = 16) -> str:
+# Key generation: 12-character keys
+def generate_key(length: int = 12) -> str:
     alphabet = string.ascii_uppercase + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
-# ─── Persistent Button View ───────────────────────────────────────────────────
-class KeyGenView(ui.View):
+class KeyGenView(View):
     def __init__(self, role_id: int):
         super().__init__(timeout=None)
         self.role_id = role_id
 
-    @ui.button(label="Generate Key", style=ButtonStyle.primary)
-    async def gen_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_admin(interaction.user):
-            return await interaction.response.send_message("❌ Not authorized", ephemeral=True)
-
-        key = gen_key()
-        cursor.execute(
-            "INSERT OR IGNORE INTO keys(key, role_id) VALUES(?,?)",
-            (key, self.role_id)
-        )
+    @button(label='Generate Key', style=ButtonStyle.primary)
+    async def generate_button(self, interaction: discord.Interaction, button: Button):
+        if not await is_admin(interaction.user):
+            return await interaction.response.send_message('❌ You are not authorized.', ephemeral=True)
+        key = generate_key()
+        c.execute('INSERT OR IGNORE INTO keys (key, role_id) VALUES (?, ?)', (key, self.role_id))
         conn.commit()
-        with open(KEYS_FILE, "a") as f:
-            f.write(key + "\n")
+        with open(KEYS_FILE, 'a') as f:
+            f.write(f"{key}\n")
+        await interaction.response.send_message(f'🔑 Key generated: `{key}`', ephemeral=True)
 
-        await interaction.response.send_message(f"🔑 Key generated: `{key}`", ephemeral=True)
+class KeyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.default())
+        self.tree = app_commands.CommandTree(self)
 
-# ─── Events ───────────────────────────────────────────────────────────────────
-@bot.event
-async def on_ready():
-    await bot.tree.sync()
-    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    async def setup_hook(self):
+        # Register persistent view
+        if 'panel_message_id' in config and 'channel_id' in config and 'role_id' in config:
+            self.add_view(KeyGenView(config['role_id']), message_id=config['panel_message_id'])
+        # Sync commands
+        await self.tree.sync()
 
-    # re-attach persistent view if set
-    if {"panel_message_id","channel_id","role_id"} <= set(config.keys()):
-        view = KeyGenView(config["role_id"])
-        bot.add_view(view, message_id=config["panel_message_id"])
+bot = KeyBot()
 
-# ─── Slash Commands ───────────────────────────────────────────────────────────
-@bot.tree.command(name="setup", description="Configure the key-gen panel")
-@app_commands.describe(
-    channel="Where to post the Generate Key button",
-    role="Role to assign when redeeming"
-)
-async def setup(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    role:    discord.Role
-):
-    if not (interaction.user.guild_permissions.manage_guild or interaction.user.id == OWNER_ID):
-        return await interaction.response.send_message("❌ You need Manage Guild permissions", ephemeral=True)
-
-    config["channel_id"]       = channel.id
-    config["role_id"]          = role.id
-    view                       = KeyGenView(role.id)
-    msg                        = await channel.send(
-        f"📋 Key Generator for **{role.name}** — click below to make new keys!",
+@bot.tree.command(name='setup', description='Configure the key-gen panel')
+@app_commands.describe(channel='Text channel for the panel', role='Role to assign upon redemption')
+async def setup(interaction: discord.Interaction, channel: discord.TextChannel, role: discord.Role):
+    if not interaction.user.guild_permissions.manage_guild:
+        return await interaction.response.send_message('❌ You need Manage Server permission.', ephemeral=True)
+    config['channel_id'] = channel.id
+    config['role_id'] = role.id
+    view = KeyGenView(role.id)
+    msg = await channel.send(
+        f'📋 Key Generator for role **{role.name}**. Click below to generate keys:',
         view=view
     )
-    config["panel_message_id"] = msg.id
-
-    with open(CONFIG_PATH, "w") as f:
+    config['panel_message_id'] = msg.id
+    with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f)
+    await interaction.response.send_message(
+        f'Setup complete! Panel posted in {channel.mention}.',
+        ephemeral=True
+    )
 
-    await interaction.response.send_message("✅ Setup complete!", ephemeral=True)
-
-@bot.tree.command(name="listkeys", description="Download the keys.txt file")
-async def listkeys(interaction: discord.Interaction):
-    if not is_admin(interaction.user):
-        return await interaction.response.send_message("❌ Not authorized", ephemeral=True)
-
-    if not os.path.exists(KEYS_FILE):
-        return await interaction.response.send_message("No keys have been generated yet.", ephemeral=True)
-
-    await interaction.response.send_message("📥 Here are all the keys:", 
-        file=discord.File(KEYS_FILE), ephemeral=True)
-
-@bot.tree.command(name="redeem", description="Redeem a key for your role")
-@app_commands.describe(key="The key you want to redeem")
+@bot.tree.command(name='redeem', description='Redeem a key to get your role')
+@app_commands.describe(key='The key to redeem')
 async def redeem(interaction: discord.Interaction, key: str):
-    cursor.execute("SELECT role_id, redeemed_by FROM keys WHERE key=?", (key,))
-    row = cursor.fetchone()
+    c.execute('SELECT role_id, redeemed_by FROM keys WHERE key = ?', (key,))
+    row = c.fetchone()
     if not row:
-        return await interaction.response.send_message("❌ Invalid key", ephemeral=True)
-
+        return await interaction.response.send_message('Invalid key.', ephemeral=True)
     role_id, redeemed_by = row
     if redeemed_by:
-        return await interaction.response.send_message("❌ This key has already been used", ephemeral=True)
-
+        return await interaction.response.send_message('This key has already been redeemed.', ephemeral=True)
     role = interaction.guild.get_role(role_id)
     if not role:
-        return await interaction.response.send_message("❌ Configured role not found", ephemeral=True)
-
+        return await interaction.response.send_message('Role not found on server.', ephemeral=True)
     await interaction.user.add_roles(role)
-    cursor.execute(
-        "UPDATE keys SET redeemed_by=?, redeemed_at=? WHERE key=?",
-        (interaction.user.id, datetime.utcnow().isoformat(), key)
-    )
+    now = datetime.utcnow().isoformat()
+    c.execute('UPDATE keys SET redeemed_by = ?, redeemed_at = ? WHERE key = ?', (interaction.user.id, now, key))
     conn.commit()
+    await interaction.response.send_message(
+        f'✅ Successfully redeemed key and added role {role.name}!',
+        ephemeral=True
+    )
 
-    await interaction.response.send_message(f"✅ Successfully redeemed `{key}`!", ephemeral=True)
+@bot.tree.command(name='listkeys', description='Download the keys file')
+async def listkeys(interaction: discord.Interaction):
+    if not await is_admin(interaction.user):
+        return await interaction.response.send_message('❌ You are not authorized.', ephemeral=True)
+    if not os.path.exists(KEYS_FILE):
+        return await interaction.response.send_message('No keys file found.', ephemeral=True)
+    await interaction.response.send_message('📄 Here are the keys:', file=discord.File(KEYS_FILE), ephemeral=True)
 
-# ─── Run Bot ──────────────────────────────────────────────────────────────────
 bot.run(TOKEN)
