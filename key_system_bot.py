@@ -21,7 +21,6 @@ HMAC_SECRET     = os.getenv('HMAC_SECRET', '')
 GIST_TOKEN      = os.getenv('KEYS_GIST_TOKEN')
 GIST_ID         = os.getenv('GIST_ID')
 
-# Load or init panel config
 config = {}
 if os.path.exists('config.json'):
     try:
@@ -61,10 +60,6 @@ def fetch_entries():
     return lines, gist
 
 def push_entries(keys, gist):
-    """
-    keys: list of key strings.
-    Overwrite gist 'keys.txt' so that each key is on its own line.
-    """
     content = "\n".join(keys)
     try:
         gist.edit(
@@ -93,30 +88,22 @@ class KeyGenView(View):
         except Exception as e:
             await interaction.response.send_message(f'❌ Error fetching entries: {e}', ephemeral=True)
             return
-
-        # append new key
         keys.append(key)
         try:
             push_entries(keys, gist)
         except Exception as e:
             await interaction.response.send_message(f'❌ Error updating gist: {e}', ephemeral=True)
             return
-
-        # Build license payload & HMAC-sign it
-        # Sign only {"key": key}
+            
         issued_at = datetime.utcnow().isoformat()
         payload = {'key': key}
         data = json.dumps(payload, separators=(',',':')).encode()
         sig = hmac.new(HMAC_SECRET.encode(), data, hashlib.sha256).hexdigest()
-
-        # Build final license blob, include issued_at metadata
         blob = {
             'payload': payload,
             'issued_at': issued_at,
             'signature': sig
         }
-
-        # Debug print so you can inspect in logs
         print("=== DEBUG: license blob ===")
         print(json.dumps(blob, separators=(',',':')))
         print("===========================")
@@ -213,7 +200,6 @@ async def redeem(interaction: discord.Interaction, key: str):
         except Exception:
             await interaction.response.send_message('❌ Failed to assign role; check bot permissions.', ephemeral=True)
             return
-        # remove key so it can't be reused
         keys.remove(key)
         try:
             push_entries(keys, gist)
