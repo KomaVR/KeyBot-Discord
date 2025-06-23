@@ -54,7 +54,6 @@ def fetch_entries():
     file = gist.files.get('keys.txt')
     lines = []
     if file and file.content is not None:
-        # splitlines handles \r\n or \n
         for ln in file.content.splitlines():
             ln = ln.strip()
             if ln:
@@ -104,10 +103,18 @@ class KeyGenView(View):
             return
 
         # Build license payload & HMAC-sign it
-        payload = {'key': key, 'issued_at': datetime.utcnow().isoformat()}
+        # We sign only {"key": key} so Node verifier matches exactly that.
+        issued_at = datetime.utcnow().isoformat()
+        payload = {'key': key}
         data = json.dumps(payload, separators=(',',':')).encode()
         sig = hmac.new(HMAC_SECRET.encode(), data, hashlib.sha256).hexdigest()
-        blob = {'payload': payload, 'signature': sig}
+
+        # Include issued_at metadata separately (not part of HMAC)
+        blob = {
+            'payload': payload,
+            'issued_at': issued_at,
+            'signature': sig
+        }
         buf = io.BytesIO(json.dumps(blob).encode())
         buf.name = 'license.lic'
 
