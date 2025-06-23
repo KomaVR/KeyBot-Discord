@@ -1,0 +1,11 @@
+# secret state
+keys.txt
+keys.db
+config.json
+
+# env
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
