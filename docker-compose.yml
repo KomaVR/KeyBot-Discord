@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  keybot:
+    image: python:3.10-slim
+    container_name: key-system-bot
+    working_dir: /app
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    command: python key_system_bot.py
+    restart: always
+    depends_on:
+      - db
+
+  db:
+    image: nouchka/sqlite3:latest
+    container_name: keybot-db
+    volumes:
+      - ./keys.db:/data/keys.db
+    command: tail -f /dev/null
