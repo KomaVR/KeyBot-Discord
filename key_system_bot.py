@@ -13,19 +13,16 @@ import hmac
 import hashlib
 import io
 
-# Load environment
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 ADMIN_ROLE_NAME = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
-OWNER_ID = int(os.getenv('OWNER_ID', '0'))      # Bot owner ID (optional)
-HMAC_SECRET = os.getenv('HMAC_SECRET', '')      # Secret for signing licenses
+OWNER_ID = int(os.getenv('OWNER_ID', '0'))
+HMAC_SECRET = os.getenv('HMAC_SECRET', '')
 
-# Paths
 DB_PATH = 'keys.db'
 CONFIG_PATH = 'config.json'
 KEYS_FILE = 'keys.txt'
 
-# Initialize DB (creates keys.db & table if missing)
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 c.execute('''
@@ -38,20 +35,17 @@ CREATE TABLE IF NOT EXISTS keys (
 ''')
 conn.commit()
 
-# Load or init config
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, 'r') as f:
         config = json.load(f)
 else:
     config = {}
 
-# Helper: check admin permissions
 async def is_admin(member: discord.Member) -> bool:
     if OWNER_ID and member.id == OWNER_ID:
         return True
     return any(r.name == ADMIN_ROLE_NAME for r in member.roles)
 
-# Key generator: 12-character alphanumeric
 def generate_key(length: int = 12) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
@@ -66,14 +60,12 @@ class KeyGenView(View):
         if not await is_admin(interaction.user):
             return await interaction.response.send_message('❌ You are not authorized.', ephemeral=True)
 
-        # 1) Generate and store the key
         key = generate_key()
         c.execute('INSERT OR IGNORE INTO keys (key, role_id) VALUES (?, ?)', (key, self.role_id))
         conn.commit()
         with open(KEYS_FILE, 'a') as f:
             f.write(f"{key}\n")
 
-        # 2) Build license payload and sign it
         payload = {
             'key':       key,
             'issued_to': str(interaction.user.id),
@@ -86,7 +78,6 @@ class KeyGenView(View):
             'signature': signature
         }
 
-        # 3) DM the user the license file
         buf = io.BytesIO(json.dumps(license_blob).encode())
         buf.name = 'license.lic'
         try:
@@ -104,10 +95,8 @@ class KeyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Register the persistent button view after a restart
         if 'panel_message_id' in config and 'channel_id' in config and 'role_id' in config:
             self.add_view(KeyGenView(config['role_id']), message_id=config['panel_message_id'])
-        # Sync slash commands
         await self.tree.sync()
 
 bot = KeyBot()
@@ -120,8 +109,6 @@ bot = KeyBot()
 async def setup(interaction: discord.Interaction, channel: discord.TextChannel, role: discord.Role):
     if not interaction.user.guild_permissions.manage_guild:
         return await interaction.response.send_message('❌ You need Manage Server permission.', ephemeral=True)
-
-    # Save panel config and post the button
     config['channel_id'] = channel.id
     config['role_id']   = role.id
     view = KeyGenView(role.id)
