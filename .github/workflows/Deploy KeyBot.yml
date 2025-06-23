@@ -1,0 +1,50 @@
+# .github/workflows/deploy.yml
+name: Deploy KeyBot
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) pull down your code
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2) install Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # 3) install deps
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4) (optional) explicit SQLite “migration”
+      - name: Initialize SQLite DB
+        run: |
+          python - << 'EOF'
+          import sqlite3
+          conn = sqlite3.connect('keys.db')
+          conn.execute('''
+            CREATE TABLE IF NOT EXISTS keys (
+              key TEXT PRIMARY KEY,
+              role_id INTEGER,
+              redeemed_by INTEGER,
+              redeemed_at TEXT
+            );
+          ''')
+          conn.commit()
+          EOF
+
+      # 5) launch the bot (for real hosting you’d deploy elsewhere—this is just a demo)
+      - name: Launch KeyBot
+        env:
+          DISCORD_TOKEN:   ${{ secrets.DISCORD_TOKEN }}
+          OWNER_ID:        ${{ secrets.OWNER_ID }}
+          ADMIN_ROLE_NAME: ${{ secrets.ADMIN_ROLE_NAME }}
+        run: python key_system_bot.py
