@@ -91,7 +91,7 @@ class KeyGenView(View):
         buf.name = 'license.lic'
         try:
             await interaction.user.send(
-                content='🔑 Here is your license file. Keep it private and place it next to your DLL.',
+                content='🔑 Here is your license file. Keep it private and place it in the folder your DLL made.',
                 file=discord.File(buf)
             )
             await interaction.response.send_message('✅ License sent via DM!', ephemeral=True)
