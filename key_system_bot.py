@@ -46,9 +46,9 @@ def fetch_entries():
     Returns: (entries_list, gist_object)
     entries_list is a list of dicts: {'key':..., 'role_id':int, 'redeemed_by':str or None, 'redeemed_at':str or None}
     """
-    if not GIST_TOKEN or not GIST_ID:
+    if not KEYS_GIST_TOKEN or not GIST_ID:
         raise RuntimeError("GIST_TOKEN or GIST_ID not set")
-    gh = Github(GIST_TOKEN)
+    gh = Github(KEYS_GIST_TOKEN)
     gist = gh.get_gist(GIST_ID)
     file = gist.files.get('keys.txt')
     lines = []
