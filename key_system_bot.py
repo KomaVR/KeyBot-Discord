@@ -103,18 +103,24 @@ class KeyGenView(View):
             return
 
         # Build license payload & HMAC-sign it
-        # We sign only {"key": key} so Node verifier matches exactly that.
+        # Sign only {"key": key}
         issued_at = datetime.utcnow().isoformat()
         payload = {'key': key}
         data = json.dumps(payload, separators=(',',':')).encode()
         sig = hmac.new(HMAC_SECRET.encode(), data, hashlib.sha256).hexdigest()
 
-        # Include issued_at metadata separately (not part of HMAC)
+        # Build final license blob, include issued_at metadata
         blob = {
             'payload': payload,
             'issued_at': issued_at,
             'signature': sig
         }
+
+        # Debug print so you can inspect in logs
+        print("=== DEBUG: license blob ===")
+        print(json.dumps(blob, separators=(',',':')))
+        print("===========================")
+
         buf = io.BytesIO(json.dumps(blob).encode())
         buf.name = 'license.lic'
 
