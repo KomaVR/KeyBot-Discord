@@ -12,12 +12,15 @@ from dotenv import load_dotenv
 import hmac
 import hashlib
 import io
+from github import Github
 
 load_dotenv()
-TOKEN            = os.getenv('DISCORD_TOKEN')
-ADMIN_ROLE_NAME  = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
-OWNER_ID         = int(os.getenv('OWNER_ID', '0'))
-HMAC_SECRET      = os.getenv('HMAC_SECRET', '')
+TOKEN             = os.getenv('DISCORD_TOKEN')
+ADMIN_ROLE_NAME   = os.getenv('ADMIN_ROLE_NAME', 'KeyManager')
+OWNER_ID          = int(os.getenv('OWNER_ID', '0'))
+HMAC_SECRET       = os.getenv('HMAC_SECRET', '')
+GIST_TOKEN        = os.getenv('KEYS_GIST_TOKEN')        # PAT with gist scope
+GIST_ID           = os.getenv('GIST_ID')                # your private Gist ID
 
 DB_PATH     = 'keys.db'
 CONFIG_PATH = 'config.json'
@@ -40,6 +43,17 @@ if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, 'r') as f:
         config = json.load(f)
 
+def push_keys_to_gist():
+    if not GIST_TOKEN or not GIST_ID or not os.path.exists(KEYS_FILE):
+        return
+    gh   = Github(GIST_TOKEN)
+    gist = gh.get_gist(GIST_ID)
+    content = open(KEYS_FILE, 'r').read()
+    gist.edit(
+        files={KEYS_FILE: {"content": content}},
+        description=f"keys.txt updated @ {datetime.utcnow().isoformat()}"
+    )
+
 async def is_admin(member: discord.Member) -> bool:
     if OWNER_ID and member.id == OWNER_ID:
         return True
@@ -58,15 +72,20 @@ class KeyGenView(View):
     async def generate_button(self, interaction: discord.Interaction, button: Button):
         if not await is_admin(interaction.user):
             return await interaction.response.send_message('❌ You are not authorized.', ephemeral=True)
+
         key = generate_key()
         c.execute('INSERT OR IGNORE INTO keys (key, role_id) VALUES (?, ?)', (key, self.role_id))
         conn.commit()
 
-        # Write to local keys.txt
-        with open(KEYS_FILE, 'a') as f:
-            f.write(f"{key}\n")
+        # rewrite keys.txt from DB
+        c.execute('SELECT key, role_id, redeemed_by, redeemed_at FROM keys')
+        rows = c.fetchall()
+        with open(KEYS_FILE, 'w') as f:
+            for k, role, redeemed, at in rows:
+                f.write(f"{k},{role},{redeemed or ''},{at or ''}\n")
 
-        # Build & send license.lic
+        push_keys_to_gist()
+
         payload = {'key': key}
         data    = json.dumps(payload, separators=(',',':')).encode()
         sig     = hmac.new(HMAC_SECRET.encode(), data, hashlib.sha256).hexdigest()
@@ -76,7 +95,7 @@ class KeyGenView(View):
         buf.name = 'license.lic'
         try:
             await interaction.user.send(
-                content='🔑 Here is your license. Place license.lic inside the “license” folder next to your DLL.',
+                content='🔑 Here is your license. Place license.lic in the “license” folder next to your DLL.',
                 file=discord.File(buf)
             )
             await interaction.response.send_message('✅ License sent via DM!', ephemeral=True)
@@ -122,15 +141,14 @@ async def listkeys(interaction: discord.Interaction):
     if not rows:
         return await interaction.response.send_message('No keys stored yet.', ephemeral=True)
 
-    # Rewrite keys.txt from DB
     with open(KEYS_FILE, 'w') as f:
         for key, role_id, redeemed_by, redeemed_at in rows:
             f.write(f"{key},{role_id},{redeemed_by or ''},{redeemed_at or ''}\n")
 
+    push_keys_to_gist()
+
     await interaction.response.send_message(
-        '📄 All keys:',
-        file=discord.File(KEYS_FILE),
-        ephemeral=True
+        '📄 All keys (updated to private Gist).', ephemeral=True
     )
 
 @bot.tree.command(name='redeem', description='Redeem a key to get your role')
