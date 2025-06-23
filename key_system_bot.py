@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import hmac
 import hashlib
 import io
-from github import Github
+from github import Github, InputFileContent, GithubException  # <-- import InputFileContent
 
 load_dotenv()
 TOKEN             = os.getenv('DISCORD_TOKEN')
@@ -48,7 +48,10 @@ def fetch_entries():
     if not GIST_TOKEN or not GIST_ID:
         raise RuntimeError("GIST_TOKEN or GIST_ID not set")
     gh = Github(GIST_TOKEN)
-    gist = gh.get_gist(GIST_ID)
+    try:
+        gist = gh.get_gist(GIST_ID)
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch gist: {e}")
     file = gist.files.get('keys.txt')
     lines = []
     if file and file.content is not None:
@@ -78,6 +81,7 @@ def fetch_entries():
 def push_entries(entries, gist):
     """
     Given a list of entry dicts and the gist object, rewrite keys.txt in the gist.
+    Uses InputFileContent so PyGithub sends the correct payload.
     """
     lines = []
     for e in entries:
@@ -87,11 +91,19 @@ def push_entries(entries, gist):
         redeemed_at = e.get('redeemed_at') or ''
         lines.append(f"{key},{role_id},{redeemed_by},{redeemed_at}")
     content = "\n".join(lines)
-    # Edit the gist file
-    gist.edit(
-        files={'keys.txt': {"content": content}},
-        description=f"keys.txt updated @ {datetime.utcnow().isoformat()}",
-    )
+
+    # Now use InputFileContent for editing
+    try:
+        gist.edit(
+            description=f"keys.txt updated @ {datetime.utcnow().isoformat()}",
+            files={'keys.txt': InputFileContent(content)}
+        )
+    except GithubException as e:
+        # Log status and data to help debug (e.status, e.data)
+        # You can print or log this; here we'll raise a RuntimeError so upstream can catch it
+        raise RuntimeError(f"GitHub API error updating gist: status={getattr(e, 'status', 'unknown')} data={getattr(e, 'data', e)}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error updating gist: {e}")
 
 class KeyGenView(View):
     def __init__(self, role_id: int):
@@ -205,14 +217,12 @@ async def listkeys(interaction: discord.Interaction):
         await interaction.response.send_message(f'❌ Error fetching entries: {e}', ephemeral=True)
         return
     count = len(entries)
-    # Optionally, DM the full list only to admin, or just show count
-    # Here we DM the full CSV as a file for the admin privately
+    # DM the full CSV as a file for the admin privately
     csv_lines = []
     for e in entries:
         rb = e['redeemed_by'] or ''
         ra = e['redeemed_at'] or ''
         csv_lines.append(f"{e['key']},{e['role_id']},{rb},{ra}")
-    # Prepare CSV file in-memory
     bio = io.BytesIO("\n".join(csv_lines).encode())
     bio.name = 'keys.csv'
     try:
@@ -249,7 +259,6 @@ async def redeem(interaction: discord.Interaction, key: str):
             try:
                 await interaction.user.add_roles(role)
             except Exception:
-                # Could not assign
                 await interaction.response.send_message('❌ Failed to assign role; check bot permissions.', ephemeral=True)
                 return
             # Mark redeemed
@@ -258,7 +267,6 @@ async def redeem(interaction: discord.Interaction, key: str):
             try:
                 push_entries(entries, gist)
             except Exception as ex:
-                # Role was granted, but gist update failed; inform admin separately?
                 await interaction.response.send_message('⚠️ Role assigned, but failed to update redemption status: ' + str(ex), ephemeral=True)
                 return
             await interaction.response.send_message(f'✅ Redeemed key and assigned role **{role.name}**!', ephemeral=True)
